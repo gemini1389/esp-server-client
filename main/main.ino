@@ -8,8 +8,10 @@
 
 // GPIO the servo is attached to
 #define pinServo D4
+#define pinServoAnalog A0
 
 // Config for servo
+#define servoDelay 8
 #define servoMinUs 720  // 0
 #define servoMaxUs 2400 // 180
 
@@ -28,6 +30,7 @@ IPAddress subnet(255, 255, 255, 0);
 
 String valueString = String(servoDegreeMin);
 int degree = valueString.toInt();
+int analogDegree;
 
 Servo servo;
 ESP8266WebServer server(80);
@@ -36,7 +39,7 @@ void setup() {
   delay(2000);
 
   if (DEBUG_MODE) {
-    Serial.begin(115200);
+    Serial.begin(74880);
   }
   println("Debug mode is enabled");
   println("Starting...");
@@ -118,11 +121,38 @@ int getDegree(String valueString) {
   return degree;
 }
 
+// Returns analog degree for servo
+int getAnalogDegree() {
+    analogDegree = map(analogRead(pinServoAnalog), 0, 5, 0, 180);
+
+    println("Servo analog degree: " + String(analogDegree));
+}
+
 // Rotate servo
 void writeServo(int degree) {
-  servo.write(degree);
+  int start = getAnalogDegree();
+  int end = degree;
+  int position;
 
-  println("Servo rotated: " + String(degree));
+  if (start > end) {
+    for (position = start; position >= end; position--)
+    {
+      servo.write(position);
+      delay(servoDelay);
+    }
+  } else {
+    for (position = start; position <= end; position++)
+    {
+      servo.write(position);
+      delay(servoDelay);
+    }
+  }
+
+  if (degree == getAnalogDegree()) {
+    println("Servo is rotated: " + String(getAnalogDegree()) + "/" + String(degree));
+  } else {
+    println("Servo is not rotated!");
+  }
 }
 
 // Wi-Fi initialization
@@ -138,6 +168,8 @@ void initWiFi() {
 
 // Servo initialization
 void initServo() {
+  pinMode(pinServoAnalog, INPUT);
+
   servo.attach(
     pinServo,
     servoMinUs,
