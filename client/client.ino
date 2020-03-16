@@ -33,7 +33,7 @@ void setup() {
   delay(2000);
 
   if (DEBUG_MODE) {
-    Serial.begin(115200);
+    Serial.begin(74880);
   }
   println("Debug mode is enabled");
   println("Starting...");
@@ -56,13 +56,13 @@ void loop() {
       doReconnect = true;
       println("WiFi Disconnected");
     }
-  }
 
-  if (doReconnect) {
-      WiFi.reconnect();
-      connectionWiFi();
-      doReconnect = false;
-      println("WiFi Reconnected");
+    if (doReconnect) {
+        WiFi.reconnect();
+        connectionWiFi();
+        doReconnect = false;
+        println("WiFi Reconnected");
+    }
   }
 }
 
