@@ -16,8 +16,13 @@
 #define servoMaxUs 2400 // 180
 
 // Min and max degree for rotation servo
-#define servoDegreeMin 45
-#define servoDegreeMax 105
+#define servoDegreeMin  45  // 0
+#define servoDegreeMax  105 // 170
+#define servoAnalogMin  348 // 221
+#define servoAnalogMax  493 // 665
+#define servoAnalogDiff 5   // degrees
+
+#define servoRotationMaxAttempts 3
 
 // Credentials for Wi-Fi
 const char* ssid     = "AGS-WiFi";
@@ -28,8 +33,7 @@ IPAddress local_IP(192, 168, 1, 13);
 IPAddress gateway(192, 168, 1, 13);
 IPAddress subnet(255, 255, 255, 0);
 
-String valueString = String(servoDegreeMin);
-int degree = valueString.toInt();
+int newDegree = servoDegreeMin;
 int analogDegree;
 
 Servo servo;
@@ -39,7 +43,7 @@ void setup() {
   delay(2000);
 
   if (DEBUG_MODE) {
-    Serial.begin(74880);
+    Serial.begin(115200);
   }
   println("Debug mode is enabled");
   println("Starting...");
@@ -66,7 +70,7 @@ void handleRoot() {
   // Web Page
   ptr += "</head><body><h1>ESP8266 with Servo</h1>\n";
   ptr += "<p>Position: <span id=\"servoPos\"></span></p>\n";
-  ptr += "<input type=\"range\" min=\"" + String(servoDegreeMin) + "\" max=\"" + String(servoDegreeMax) + "\" class=\"slider\" id=\"servoSlider\" value=\"" + valueString + "\"/>";
+  ptr += "<input type=\"range\" min=\"" + String(servoDegreeMin) + "\" max=\"" + String(servoDegreeMax) + "\" class=\"slider\" id=\"servoSlider\" value=\"" + String(newDegree) + "\"/>";
 
   ptr += "<script>\n";
   ptr += "  var slider = document.getElementById(\"servoSlider\");\n";
@@ -89,9 +93,18 @@ void handleRoot() {
 
   //GET /?value=180 HTTP/1.1
   if (server.arg("value") != "") {
-    valueString = server.arg("value");
+    newDegree = myConstrain(server.arg("value").toInt(), servoDegreeMin, servoDegreeMax);
 
-    writeServo(getDegree(valueString));
+    bool rotated = false;
+    byte attempts = 1;
+    while (!rotated && attempts <= servoRotationMaxAttempts) {
+      rotated = writeServo(newDegree);
+      if (!rotated) {
+        println("[FAIL] Servo rotation error! Attempt: " + String(attempts) + "/" + String(servoRotationMaxAttempts));
+        attempts++;
+        delay(100);
+      }
+    }
   }
 
   server.send(200, "text/html", ptr);
@@ -101,35 +114,36 @@ void handleRoot() {
 void handleStatus() {
   JSONVar statusObj;
 
-  statusObj["servoDegreeCurrent"] = degree;
+  statusObj["servoDegreeCurrent"] = newDegree;
   statusObj["servoDegreeMin"] = servoDegreeMin;
   statusObj["servoDegreeMax"] = servoDegreeMax;
 
   server.send(200, "application/json", JSON.stringify(statusObj));
 }
 
-// Returns degree for servo
-int getDegree(String valueString) {
-  degree = valueString.toInt();
-  if (degree < servoDegreeMin) {
-    degree = servoDegreeMin;
+// My constrain function
+int myConstrain(int value, int minVal, int maxVal) {
+  if (value < minVal) {
+    value = minVal;
   }
 
-  if (degree > servoDegreeMax) {
-    degree = servoDegreeMax;
+  if (value > maxVal) {
+    value = maxVal;
   }
-  return degree;
+  return value;
 }
 
 // Returns analog degree for servo
 int getAnalogDegree() {
-    analogDegree = map(analogRead(pinServoAnalog), 0, 5, 0, 180);
+  int analogVal = analogRead(pinServoAnalog);
+  analogVal = myConstrain(analogVal, servoAnalogMin, servoAnalogMax);
+  analogDegree = map(analogVal, servoAnalogMin, servoAnalogMax, servoDegreeMin, servoDegreeMax);
 
-    println("Servo analog degree: " + String(analogDegree));
+  return analogDegree;
 }
 
 // Rotate servo
-void writeServo(int degree) {
+bool writeServo(int degree) {
   int start = getAnalogDegree();
   int end = degree;
   int position;
@@ -148,11 +162,19 @@ void writeServo(int degree) {
     }
   }
 
-  if (degree == getAnalogDegree()) {
-    println("Servo is rotated: " + String(getAnalogDegree()) + "/" + String(degree));
-  } else {
-    println("Servo is not rotated!");
-  }
+  delay(100);
+  position = getAnalogDegree();
+
+  int checkMin = degree - servoAnalogDiff;
+  int checkMax = degree + servoAnalogDiff;
+  bool rotated = position > checkMin && position < checkMax;
+
+  print(rotated ? "[OK] Servo is rotated!" : "[FAIL] Servo is not rotated!");
+  print(" ");
+  print(String(position) + "/" + String(degree) + " (Analog/Digital)");
+  println(" | Diff min: " + String(checkMin) + " | Diff max: " + String(checkMax));
+
+  return rotated;
 }
 
 // Wi-Fi initialization
@@ -180,7 +202,7 @@ void initServo() {
     println("Servo attached");
   }
 
-  writeServo(valueString.toInt());
+  writeServo(newDegree);
 }
 
 // Server initialization
@@ -190,6 +212,13 @@ void initServer() {
   server.begin();
 
   println("HTTP server started");
+}
+
+// Print message to Serial
+void print(String message) {
+  if (DEBUG_MODE) {
+    Serial.print(message);
+  }
 }
 
 // Print message to Serial
