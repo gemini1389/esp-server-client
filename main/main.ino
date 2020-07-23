@@ -7,22 +7,27 @@
 #define DEBUG_MODE true
 
 // GPIO the servo is attached to
-#define pinServo D4
-#define pinServoAnalog A0
+#define pinServo        D4
+#define pinServoAnalog  A0
 
 // Config for servo
-#define servoDelay 8
-#define servoMinUs 720  // 0
-#define servoMaxUs 2400 // 180
+#define servoDelay        8
+#define servoDiagDelay    30
+#define servoMinUs        720  // 0
+#define servoMaxUs        2400 // 180
+#define servoMaxAttempts  3
 
 // Min and max degree for rotation servo
 #define servoDegreeMin  45  // 0
 #define servoDegreeMax  105 // 170
+
+// Min and max analog values
 #define servoAnalogMin  348 // 221
 #define servoAnalogMax  493 // 665
-#define servoAnalogDiff 5   // degrees
 
-#define servoRotationMaxAttempts 3
+// Possible difference between values
+#define servoAnalogDegreesDiff  5
+#define servoAnalogAnalogDiff   50
 
 // Credentials for Wi-Fi
 const char* ssid     = "AGS-WiFi";
@@ -35,6 +40,7 @@ IPAddress subnet(255, 255, 255, 0);
 
 int newDegree = servoDegreeMin;
 int analogDegree;
+unsigned long timer;
 
 Servo servo;
 ESP8266WebServer server(80);
@@ -45,16 +51,47 @@ void setup() {
   if (DEBUG_MODE) {
     Serial.begin(115200);
   }
-  println("Debug mode is enabled");
-  println("Starting...");
+  println("[INIT] Debug mode is enabled");
+  println("[INIT] Starting...");
 
   initWiFi();
-  initServo();
+  println("--------------");
   initServer();
+  println("--------------");
+  initServo();
+  println("--------------");
+  servoDiagnostics();
+
+  println("[INIT] Initialization is complete");
 }
 
 void loop() {
   server.handleClient();
+}
+
+// Rotate servo
+bool writeServo(int degree, bool isDiagnostics = false) {
+  int start = getAnalogDegree();
+  int end = degree;
+  int position;
+
+  if (start > end) {
+    for (position = start; position >= end; position--)
+    {
+      servo.write(position);
+      delay(isDiagnostics ? servoDiagDelay : servoDelay);
+    }
+  } else {
+    for (position = start; position <= end; position++)
+    {
+      servo.write(position);
+      delay(isDiagnostics ? servoDiagDelay : servoDelay);
+    }
+  }
+
+  delay(100);
+
+  return isServoRotated(degree);
 }
 
 // Main page
@@ -97,10 +134,10 @@ void handleRoot() {
 
     bool rotated = false;
     byte attempts = 1;
-    while (!rotated && attempts <= servoRotationMaxAttempts) {
+    while (!rotated && attempts <= servoMaxAttempts) {
       rotated = writeServo(newDegree);
       if (!rotated) {
-        println("[FAIL] Servo rotation error! Attempt: " + String(attempts) + "/" + String(servoRotationMaxAttempts));
+        println("[FAIL] Servo rotation error! Attempt: " + String(attempts) + "/" + String(servoMaxAttempts));
         attempts++;
         delay(100);
       }
@@ -142,37 +179,33 @@ int getAnalogDegree() {
   return analogDegree;
 }
 
-// Rotate servo
-bool writeServo(int degree) {
-  int start = getAnalogDegree();
-  int end = degree;
-  int position;
+// It returns the status of whether the servo turned
+bool isServoRotated(int degreeNeedle) {
+  bool rotated = false;
 
-  if (start > end) {
-    for (position = start; position >= end; position--)
-    {
-      servo.write(position);
-      delay(servoDelay);
-    }
-  } else {
-    for (position = start; position <= end; position++)
-    {
-      servo.write(position);
-      delay(servoDelay);
-    }
+  // Check by analog value
+  int analogVal = analogRead(pinServoAnalog);
+  int checkMinAnalog = servoAnalogMin - servoAnalogAnalogDiff;
+  int checkMaxAnalog = servoAnalogMax + servoAnalogAnalogDiff;
+  rotated = analogVal > checkMinAnalog && analogVal < checkMaxAnalog;
+
+  print("[INFO] Analog: ");
+  print(String(analogVal));
+  println(" | Diff min: " + String(checkMinAnalog) + " | Diff max: " + String(checkMaxAnalog));
+
+  // Check by digital value
+  if (rotated) {
+    int degreeAnalog = getAnalogDegree();
+    int checkMin = degreeNeedle - servoAnalogDegreesDiff;
+    int checkMax = degreeNeedle + servoAnalogDegreesDiff;
+    rotated = degreeAnalog > checkMin && degreeAnalog < checkMax;
+
+    print("[INFO] Digital: ");
+    print(String(degreeAnalog) + "/" + String(degreeNeedle) + " (Analog/Digital)");
+    println(" | Diff min: " + String(checkMin) + " | Diff max: " + String(checkMax));
   }
 
-  delay(100);
-  position = getAnalogDegree();
-
-  int checkMin = degree - servoAnalogDiff;
-  int checkMax = degree + servoAnalogDiff;
-  bool rotated = position > checkMin && position < checkMax;
-
-  print(rotated ? "[OK] Servo is rotated!" : "[FAIL] Servo is not rotated!");
-  print(" ");
-  print(String(position) + "/" + String(degree) + " (Analog/Digital)");
-  println(" | Diff min: " + String(checkMin) + " | Diff max: " + String(checkMax));
+  println(rotated ? "[OK] Servo is rotated!" : "[FAIL] Servo is not rotated!");
 
   return rotated;
 }
@@ -184,8 +217,8 @@ void initWiFi() {
     delay(750);
   }
 
-  println("AP SSID: " + String(ssid));
-  println("AP IP: " + WiFi.softAPIP().toString());
+  println("[INIT] AP SSID: " + String(ssid));
+  println("[INIT] AP IP: " + WiFi.softAPIP().toString());
 }
 
 // Servo initialization
@@ -199,7 +232,7 @@ void initServo() {
   );
 
   if (servo.attached()) {
-    println("Servo attached");
+    println("[INIT] Servo attached");
   }
 
   writeServo(newDegree);
@@ -211,7 +244,50 @@ void initServer() {
   server.on("/status", handleStatus);
   server.begin();
 
-  println("HTTP server started");
+  println("[INIT] HTTP server started");
+}
+
+// Diagnostics for servo
+void servoDiagnostics() {
+  println("[INIT] Servo diagnostics: start");
+
+  bool diagStatus = true;
+  diagStatus = writeServo(servoDegreeMax, true);
+
+  print(diagStatus ? "[OK]" : "[FAIL]");
+  println(" Servo diagnostics #1 (to " + String(servoDegreeMax) + "°)");
+
+  if (diagStatus) {
+    diagStatus = writeServo(servoDegreeMin, true);
+  }
+
+  print(diagStatus ? "[OK]" : "[FAIL]");
+  println(" Servo diagnostics #2 (to " + String(servoDegreeMin) + "°)");
+
+  if (diagStatus) {
+    diagStatus = writeServo(servoDegreeMax, true);
+  }
+
+  print(diagStatus ? "[OK]" : "[FAIL]");
+  println(" Servo diagnostics #3 (to " + String(servoDegreeMax) + "°)");
+
+  if (diagStatus) {
+    diagStatus = writeServo(servoDegreeMin, true);
+  }
+
+  print(diagStatus ? "[OK]" : "[FAIL]");
+  println(" Servo diagnostics #4 (to " + String(servoDegreeMin) + "°)");
+
+  if (!diagStatus) {
+    while (true) {
+      if (millis() - timer >= 3000) {
+        timer = millis();
+        println("[FAIL] Servo diagnostics: Shit happens...");
+      }
+    }
+  }
+
+  println("[INIT] Servo diagnostics: success");
 }
 
 // Print message to Serial
